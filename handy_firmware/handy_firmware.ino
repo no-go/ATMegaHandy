@@ -7,11 +7,6 @@
 
 // ------------------------------------------------------
 
-#define SPI_SCK    13
-#define SPI_MISO   12
-#define SPI_SDA    11
-#define SPI_SS     10
-
 #define BUTTON1    A3
 #define BUTTON2    4  // blue
 #define BUTTON3    3  // red

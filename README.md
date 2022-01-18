@@ -28,7 +28,11 @@ It is a kick-ass code and a prove of concept to:
 - normal telephone function (dial and take call)
 - send and read sms
 
+## Sketch
+
+![Photo](sketch.jpg)
+
 ## todo
 
-- new image
 - circuit
+- pictures
