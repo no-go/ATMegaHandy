@@ -1,464 +1,231 @@
-#include <Wire.h> //I2C Arduino Library
+#include <Arduino.h>
+#include <SPI.h>
 #include <Adafruit_GFX.h>
-#include "Adafruit_SSD1306.h"
-#include <EEPROM.h>
+#include <Adafruit_SSD1306.h>
+#include <MsTimer2.h>
 
-#define RESET_EEPROM false
+#define POTI    A3
+#define BUTTON1 A2
+#define BUTTON2 12
 
-// ------------------------------------------------------
+Adafruit_SSD1306 oled(A1, -1, A0);
 
-#define BUTTON1    A3
-#define BUTTON2    4  // blue
-#define BUTTON3    3  // red
-#define BUTTON4    2  // yellow
+char text[169] = 
+    "                     " // 21 chars
+    "                     "
+    "                     "
+    "                     "
+    "                     "
+    "                     "
+    "                     "
+    "                     "; // 8 lines (+ \0)
+int txtid = 0;
+char c = 0;
+bool hangedup = true;
+int index = 0;
+int sensorValue = 0;
 
-#define LEDRED    A0
-#define LEDWHITE  9  // unused
-#define VIBRATO   8  // unused (only on startup)
+void clearText() {
+  for (txtid = 0; txtid<169; ++txtid) text[txtid] = ' ';
+  txtid = 0;
+}
 
-#define pinA A1
-#define pinB A2
+void doRefresh() {
+  oled.clearDisplay();
+  oled.setCursor(0,0);
 
-#define SERIAL_SPEED  9600
-
-// HARDWARE I2C: A4 -> SDA, A5 -> SCL
-#define PIN_RESET  4 // dummy
-Adafruit_SSD1306 oled(PIN_RESET);
-
-bool      logi[8] = {0,0,0,0, 0,0,0,0};
-int      tick = 0;
-bool  changes = false;
-byte      valA = 0;
-byte      valB = 0;
-byte      valAold = 0;
-byte      valBold = 0;
-
-bool valRed = false;
-
-bool numberselect = false;
-char numbers[21]  = "+49 1570 000 00 00  "; // and char 21 is numbers[20] = '\0'
-byte numberi      = 0;
-
-char buff;
-int buffid = 0;
-
-int vcc = 3780;
-uint16_t counter = 0;
-uint16_t eepromID = 0;
-
-void head() {
-  oled.fillRect(0, 0, 20, 8, BLACK);
-  oled.drawRect(0, 0, 18, 8, WHITE);
-  oled.fillRect(18, 2, 3, 4, WHITE);
-  oled.fillRect(2, 2, map(vcc, 3700, 4350, 2, 14), 4, WHITE);
+  if (sensorValue < 200) {
+    // power -------------------------------------------
+    oled.fillRect(42, 40, 40, 14, BLACK);
+    oled.drawRect(42, 40, 38, 14, WHITE);
+    oled.fillRect(80, 44, 4, 6, WHITE);
+    oled.fillRect(44, 42, map(text[51], '1', '9', 2, 34), 10, WHITE);
+    oled.print(text);
+    
+  } else if (sensorValue < 400) {
+    oled.print(text);
+    /* SIGNAL -------------------------------------------
+     * 0 and 1 = -115 or less and -111 dBm
+     * 2 .. 30 = -111 .. -54 (3 is ca -111 +2dBm)
+     * 31      = -52 or better
+     * 99 = fail
+     * 
+     * Android(LTE):
+     *          -128 no 
+     *          -119 (1 Balken)
+     *          -109 (2 Balken)
+     *           -99 (3 Balken)
+     *           -89 (4 Balken)
+     */
+    oled.drawRect(58, 42, 14, 20, WHITE);
+    
+    if (text[50] == ',') {
+      // 0..9 -> below -97
+      oled.drawLine(60,60,60,57, WHITE);
+    } else if (text[49] == '1') {
+      // -97 or better
+      oled.drawLine(60,60,60,57, WHITE);
+      oled.drawLine(62,60,62,55, WHITE);
+      if (text[50] > '4') {
+        // -85 or better
+        oled.drawLine(64,60,64,53, WHITE);
+      }
+    } else if (text[49] == '2') {
+      // -75 or better
+      oled.drawLine(60,60,60,57, WHITE);
+      oled.drawLine(62,60,62,55, WHITE);
+      oled.drawLine(64,60,64,53, WHITE);
+      oled.drawLine(66,60,66,50, WHITE);
+      if (text[50] > '4') {
+        // -55 or better
+        oled.drawLine(68,60,68,48, WHITE);
+      }      
+    } else if (text[49] == '3') {
+      // -54 or better
+      oled.drawLine(60,60,60,57, WHITE);
+      oled.drawLine(62,60,62,55, WHITE);
+      oled.drawLine(64,60,64,53, WHITE);
+      oled.drawLine(66,60,66,50, WHITE);
+      oled.drawLine(68,60,68,48, WHITE);
+      oled.drawLine(70,60,70,44, WHITE);
+    }
+    
+  } else if (sensorValue < 600) {
+    // date and time --------------------------------
+    text[42] = '2'; text[43] = '0';
+    text[52] = ' ';
+    text[61] = ' '; text[62] = ' '; text[63] = ' ';
+    oled.print(text);
+    oled.setTextSize(3);
+    oled.setCursor(0,40);
+    oled.print(text[53]); oled.print(text[54]);
+    oled.print(text[55]);
+    oled.print(text[56]); oled.print(text[57]);
+    oled.setTextSize(2);
+    oled.setCursor(100,40);
+    oled.print(text[59]); oled.print(text[60]);
+    oled.setTextSize(1);
+    
+  } else {
+    // normal mode (accept, hangup, sms read) --------
+    oled.print(text);
+  }
+  oled.display();
 }
 
 void setup() {
-  Serial.begin(SERIAL_SPEED);
+  Serial.begin(57600);
+  oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   pinMode(BUTTON1, INPUT_PULLUP);
-  pinMode(pinA, INPUT_PULLUP);
-  pinMode(pinB, INPUT_PULLUP);
-
   pinMode(BUTTON2, INPUT_PULLUP);
-  pinMode(BUTTON3, INPUT_PULLUP);
-  pinMode(BUTTON4, INPUT_PULLUP);
-  digitalWrite(BUTTON3, HIGH);
-  digitalWrite(BUTTON4, HIGH);
   
-  pinMode(LEDRED, OUTPUT);
-  pinMode(LEDWHITE, OUTPUT);
-  pinMode(VIBRATO, OUTPUT);
-  
-  oled.begin();
-  Serial.println(F("atz")); // reset
-  oled.clearDisplay();
-  oled.setTextColor(WHITE, BLACK);
-  oled.setTextSize(2);
-  oled.setCursor(8, 20);
-  oled.print(F("TelEiFone"));
-  oled.display();
-
-  if (RESET_EEPROM == true) {
-    for (eepromID=0; eepromID<6; ++eepromID) {
-      EEPROM.put(21*eepromID, numbers);
-    }
-    eepromID=0;
-  }
-  
-  EEPROM.get(21*eepromID, numbers);
-  
-  digitalWrite(LEDRED, LOW);
-  digitalWrite(LEDWHITE, LOW);
-  
-  Serial.println(F("ate0")); // echo off
-  delay(800);
-  
-  // store incoming sms and returns: +CMTI: "SM",1\n
-  Serial.println(F("at+cnmi=2,1,0,0,0"));
-  
-  // not store incoming sms and returns the SMS data:
-  // +CMT: "+4915xxxyyyyy4","","22/01/13,21:49:52+04"
-  // sms text
-  //Serial.println(F("at+cnmi=1,2,0,0,0"));
-  
-  delay(800);
-  
-  // info/status/hello
-  digitalWrite(VIBRATO, HIGH);
-  Serial.println(F("ati"));
-  delay(500);  
-  digitalWrite(VIBRATO, LOW);
-  
-  // at+cops? get network cooperator
-  // at+cops=? list networks cooperator
-  // at+cbc  0,80,4025 (0=not charge,80%,4025mV)
-
   oled.clearDisplay();
   oled.setTextSize(1);
-  oled.setCursor(0, 8);
+  oled.setTextColor(WHITE);
+  oled.setCursor(0,0);
+  oled.print(text);
+  oled.display();
+  
+  delay(5000);
+  // echo off
+  Serial.println(F("ate0"));
+  delay(3000);
+  // direct store sms
+  Serial.println(F("at+cnmi=2,1,0,0,0"));
+  delay(1000);
+  //Enable auto network time sync
+  Serial.println(F("at+clts=1"));
+  delay(1000);
+  MsTimer2::set(500, doRefresh);
+  MsTimer2::start();
 }
+
 
 void loop() {
-  counter = (counter+1)%32000;
-  
-  changes = false;
-  valA = digitalRead(pinA);
-  valB = digitalRead(pinB);
+  sensorValue = analogRead(POTI);
 
-  if (valA != valAold || valB != valBold) {
-    if (valA && valB) {
-      tick=0;
-      for (int i=0;i<8;++i) {
-        logi[i] = false;
-      }
-    }
-    logi[tick] = valA;
-    tick = (tick+1)%8;
-    logi[tick] = valB;
-    tick = (tick+1)%8;
-    valAold = valA;
-    valBold = valB;
-    changes = true;
-  }
+  if (sensorValue < 200) {
 
-
-  // rotation encoder -----------------
-  
-  if (changes) {      
-    if (
-      logi[0] == 1 && logi[1] == 1 && logi[2] == 0 && logi[3] == 1 &&
-      logi[4] == 0 && logi[5] == 0 && logi[6] == 1 && logi[7] == 0
-    ) {
-      // anti clockwise
-      if (numberselect) {
-        if (numbers[numberi] == '+') {
-          numbers[numberi] = '9';
-        } else if (numbers[numberi] == ' ') {
-          numbers[numberi] = '+';
-        } else if (numbers[numberi] == '0') {
-          numbers[numberi] = ' ';
-        } else {
-          numbers[numberi]--;
-        }
-        oled.clearDisplay();
-        head();
-        oled.setCursor(26, 0);
-        oled.print(numbers);
-        oled.setCursor(26+6*numberi, 8);
-        oled.print(F("-"));
-        oled.display();
-      }
-    }
-    if (
-      logi[0] == 1 && logi[1] == 1 && logi[2] == 1 && logi[3] == 0 &&
-      logi[4] == 0 && logi[5] == 0 && logi[6] == 0 && logi[7] == 1
-    ) {
-      // clockwise
-      if (numberselect) {
-        if (numbers[numberi] == '9') {
-          numbers[numberi] = '+';
-        } else if (numbers[numberi] == '+') {
-          numbers[numberi] = ' ';
-        } else if (numbers[numberi] == ' ') {
-          numbers[numberi] = '0';
-        } else {
-          numbers[numberi]++;
-        }
-        oled.clearDisplay();
-        head();
-        oled.setCursor(26, 0);
-        oled.print(numbers);
-        oled.setCursor(26+6*numberi, 8);
-        oled.print(F("-"));
-        oled.display();
-      }
-    }
-  }
-
-
-  // rotation encoder pressed --------------------------- (next digit)
-  
-  if (digitalRead(BUTTON1) == LOW) {
-    if (numberselect) {
-      delay(100);
-      numberi = (numberi+1)%20;
-      oled.clearDisplay();
-      head();
-      oled.setCursor(26, 0);
-      oled.print(numbers);
-      oled.setCursor(26+6*numberi, 8);
-      oled.println(F("-"));
-      oled.print(F("Addr. id: "));
-      oled.print(eepromID+1);
-      oled.display();
-    } else {
-      // -------------------------------------- load next addr id
-      EEPROM.put(21*eepromID, numbers);
-      eepromID = (eepromID+1)%6;
-      EEPROM.get(21*eepromID, numbers);
-      oled.clearDisplay();
-      head();
-      oled.setCursor(26, 0);
-      oled.print(F("Addr. id: "));
-      oled.print(eepromID+1);
-      oled.setCursor(0, 16);
-      oled.print(numbers);
-      oled.display();
-    }
-  }
-
-
-  // blue button ------------------------------------------------ (sms mode !) ---------
-  
-  if (digitalRead(BUTTON2) == LOW) {
-    Serial.println(F("at+cmgf=1")); // sms text mode
-    if (numberselect) {
-      // select and send sms
-      EEPROM.put(21*eepromID, numbers);
-      numberselect = false;
-      oled.setCursor(0, 8);
-      oled.println(F("Send sms:"));
-      oled.println(F(" ja       kann nicht"));
-      oled.println(F(" nein     bis gleich"));
-      oled.println(F(" ohje     ca. +15min"));
-      oled.println(F(" hm. ok   bin spaet"));
-      oled.println(F(" haha     0 problemo"));
-      oled.print  (F(" ruf mich mal an"));
-      oled.display();
-      uint8_t mid=0;
-      
-      while (digitalRead(BUTTON1) == HIGH) {
-        // -----------------------------------  rotation encoder button: send sms
-        
-        if (digitalRead(BUTTON2) == LOW) { // 2x blue button: break/not send --------
-          delay(200);
-          mid=100;
-          oled.clearDisplay();
-          oled.setCursor(0, 16);
-          buffid=0;
-          head();
-          oled.display();
-          break;
-        }
-
-        if (digitalRead(BUTTON3) == LOW) { // -------------- red button
-          delay(100);
-          if (mid<6) oled.setCursor(0, 16+mid*8); else oled.setCursor(54, 16+(mid-6)*8);
-          oled.print(F(" "));
-          if (mid>0) {
-            mid=mid-1;
-          }
-        }
-        if (digitalRead(BUTTON4) == LOW) { // --------------- yellow button
-          delay(100);
-          if (mid<6) oled.setCursor(0, 16+mid*8); else oled.setCursor(54, 16+(mid-6)*8);
-          oled.print(F(" "));
-          if (mid<10) {
-            mid=mid+1;
-          }
-        }
-        
-        if (mid<6) oled.setCursor(0, 16+mid*8); else oled.setCursor(54, 16+(mid-6)*8);
-        oled.print(F(">"));
-        oled.display();
-      }
-
-      if (mid<100) {
-        // ----------------------------- send sms
-        oled.clearDisplay();
-        head();
-        oled.setCursor(0, 8);
-        buffid=0;
-        oled.println(F("send..."));
-        Serial.println(F("at+cmgf=1")); // sms text mode
-        delay(500);        
-        Serial.print(F("AT+CMGS=\""));
-        for (numberi=0; numberi<20; ++numberi) {
-          if (numbers[numberi] != ' ') Serial.print(numbers[numberi]);
-        }
-        numberi=0;
-        Serial.println(F("\""));
-        delay(500);
-        switch(mid) {
-          case 0:
-            Serial.print(F("ja"));
-            break;
-          case 1:
-            Serial.print(F("nein"));
-            break;
-          case 2:
-            Serial.print(F("ohje"));
-            break;
-          case 3:
-            Serial.print(F("hm. okay."));
-            break;
-          case 4:
-            Serial.print(F("haha :-D"));
-            break;
-          case 5:
-            Serial.print(F("Ruf mich mal an!"));
-            break;
-          case 6:
-            Serial.print(F("ich kann nicht"));
-            break;
-          case 7:
-            Serial.print(F("bis gleich"));
-            break;
-          case 8:
-            Serial.print(F("ca. +15min"));
-            break;
-          case 9:
-            Serial.print(F("bin spaet"));
-            break;
-          case 10:
-            Serial.print(F("null problemo"));
-            break;
-          default:
-            Serial.print(F("hm..."));
-        }
-        delay(500);
-        Serial.print((char)26); // ctrl+z
-        delay(500);
-        
-        oled.display();
-      }
-      
-    } else {
-      delay(1000);
-      if (digitalRead(BUTTON2) == LOW) {
-        // --------------------------------- long press!
-        oled.setCursor(0, 16);
-        oled.println(F("del all sms!"));
-        oled.display();
-        // ---------------------------------> delete all sms
-        Serial.println(F("at+cmgd=1,4")); 
-      } else {
-        // --------------------------------- read all sms
-        Serial.println(F("at+cmgl=\"ALL\",1"));
-      }
-    }
-  }
-
-
-
-  // red button --------------------------------------------------
-  
-  if (digitalRead(BUTTON3) == LOW) {
-    valRed = !valRed;
-    digitalWrite(LEDRED, valRed);
-    oled.clearDisplay();
-    head();
-    oled.setCursor(0, 8);
-    delay(400);
-    if (valRed) {
-      if (numberselect) {
-        // --------------------------------- dial
-        EEPROM.put(21*eepromID, numbers);
-        numberselect = false;
-        oled.println(F("Dial..."));
-        oled.display();
-        // dial
-        Serial.print(F("atd"));
-        for (numberi=0; numberi<20; ++numberi) {
-          if (numbers[numberi] != ' ') Serial.print(numbers[numberi]);
-        }
-        numberi = 0;
-        Serial.println(F(";"));
-        delay(300);
-        Serial.println(F("atm"));
-      } else {
-        // --------------------------------- accept call
-        oled.println(F("Accept Call..."));
-        oled.display();
-        Serial.println(F("ata"));
-      }
-    } else {
-      // --------------------------------- hang up
-      oled.println(F("Hang up..."));
-      oled.display();
-      Serial.println(F("ath"));      
-    }
-  }
-
-
-  // yellow button ----------------------------- (select a address/number)
-
-  if (digitalRead(BUTTON4) == LOW) {
-    numberselect = !numberselect;
-    delay(400);
-    oled.clearDisplay();
-    head();
-    oled.setCursor(26, 0);
-    if (numberselect) {
-      oled.print(numbers);
-      oled.setCursor(26+6*numberi, 8);
-      oled.print(F("-"));      
-    } else {
-      EEPROM.put(21*eepromID, numbers);
-    }
-  }
-
-
-  // log: read/print gsm answers -------------------------------
-  
-  while (Serial.available()) {
-    buff = (char) Serial.read();
-    if (buff != '\n' && buff != '\r') {
-      oled.print(buff);
-    } else {
-      oled.print(' ');      
-    }
-    buffid++;
-  }
-
-
-  // log: display refresh ---------------------- 
-
-  if (counter%300==100) {
+    delay(2000);
+    Serial.println(F("at+cbc"));
+    clearText();
+    text[0] = 'P'; text[1] = 'O'; text[2] = 'W'; text[3] = 'E'; text[4] = 'R';
+    txtid = 42;
     
-    if (buffid > (21*6)) {
-      oled.setCursor(0, 16);
-      buffid=0;
-    }
-    oled.display();
-  }  
+  } else if (sensorValue < 400) {
 
+    delay(2000);
+    Serial.println(F("at+csq"));
+    clearText();
+    text[0] = 'S'; text[1] = 'I'; text[2] = 'G'; text[3] = 'N'; text[4] = 'A'; text[5] = 'L';
+    txtid = 42;
+    
+  } else if (sensorValue < 600) {
 
-  // request/update power and net quality ----------------------
+    delay(2000);
+    Serial.println(F("at+cclk?"));
+    clearText();
+    text[0] = 'D'; text[1] = 'A'; text[2] = 'T'; text[3] = 'E';
+    txtid = 35;
+    
+  } else {
   
-  if (counter==20000) { 
-    ADMUX = _BV(REFS0) | _BV(MUX3) | _BV(MUX2) | _BV(MUX1);
-    delay(5);
-    ADCSRA |= _BV(ADSC); // Start conversion
-    while (bit_is_set(ADCSRA,ADSC)); // measuring
-    vcc = ADCL; 
-    vcc |= ADCH<<8; 
-    vcc = 1126400L / vcc;
-    if (vcc<3700) vcc = 3700;
-    if (numberselect == false) {
-      head();
-      Serial.println(F("at+csq")); // net quality
+    if (digitalRead(BUTTON2) == LOW) {
+      delay(200);
+      
+      if (digitalRead(BUTTON2) == LOW) {
+        if (hangedup) {
+          oled.clearDisplay();
+          oled.setCursor(0,0);
+          oled.print(F("ACCEPT."));
+          clearText();
+          oled.display();
+          Serial.println(F("ata"));       
+        } else {
+          oled.clearDisplay();
+          oled.setCursor(0,0);
+          oled.print(F("HANG UP."));
+          clearText();
+          oled.display();
+          Serial.println(F("ath"));
+        }
+        hangedup = !hangedup;
+        delay(1000);
+      }
     }
+    
+    if (digitalRead(BUTTON1) == LOW) {
+      delay(200);
+  
+      if (digitalRead(BUTTON2) == LOW) {
+        oled.clearDisplay();
+        oled.setCursor(0,0);
+        oled.print(F("DEL ALL."));
+        clearText();
+        oled.display();
+        Serial.println(F("at+cmgd=1,4"));
+        delay(1000);
+      }
+      
+      if (digitalRead(BUTTON1) == LOW) {
+        Serial.println(F("at+cmgf=1"));
+        clearText();
+        text[167] = '1' + index;
+        delay(600);
+        // read
+        Serial.print("at+cmgr=");
+        Serial.println(index+1);
+        index = (index+1)%6;
+      }
+    }
+  }
+    
+  while ( Serial.available() ) {
+    c = Serial.read();
+    if (c == '\r') continue;
+    if (c == '\0') c = ' ';
+    if (c == '\n') c = ' ';
+    text[txtid] = c;
+    txtid = (txtid+1)%169;
   }
 }
-
