@@ -3,7 +3,7 @@
 Improved phone with SIM800L GSM module, arduino pro mini, 2 buttons,
 25k POTI and SD1306 SPI oled display.
 
-It is a kick-ass code and a prove of concept to:
+It was a kick-ass code and a prove of concept to:
 
 - take call / hang up
 - read sms
@@ -14,11 +14,17 @@ It is a kick-ass code and a prove of concept to:
 
 Usage:
 
-- Poti switchs 4 modes
+- Poti switchs 6 modes
+  - edit stored number 1-4, dail and send sms
   - normal
   - continoues date/time requests 
   - continoues signal strength requests
   - continoues battery power requests
+  - audio recorder
+- edit/dial/sms mode
+  - poti: select nummber 1-4
+  - button 1: select digit 1,2,3.... dial, send sms
+  - button 2: change digit 0-9, space, + or select dial/hangup or send sms
 - normal mode
   - button1
     - read sms 1,2,3,4,5,6, 1,2, ... (loop on press)
@@ -28,8 +34,19 @@ Usage:
   - button2
     - on incomming call: accept
     - hang up (exit a call)
-
-Not Implemented: **It is not possible to dial a number or send sms**.
+- date mode
+  - button 1: NOT init network time sync
+- signal strength mode
+  - button 1: init gsm modem
+  - button 2: gsm modem info
+- power mode
+  - button 1 and 2: select sms text for edit/dail/sms mode
+- record mode
+  - button 1: select function rec, play, pause, stop reord
+  - button 2: execute function
+  - automatic jump selection between:
+    - rec, rec stop, play
+    - play, pause
 
 ## Sketch
 
