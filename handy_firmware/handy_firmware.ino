@@ -1,19 +1,28 @@
 #include <Arduino.h>
 #include <SPI.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <MsTimer2.h>
+#include "Adafruit_SSD1306.h"
 #include <EEPROM.h>
 
 #define RESET_EEPROM false
 
 char numbers[15] = "+4917780000000";
 
-#define POTI    A3
-#define BUTTON1 A2
-#define BUTTON2 12
+#define BUTTON1    4  // blue
+#define BUTTON2    3  // red
+#define BUTTON3    A3 // rotation press (unused)
+#define BUTTON4    2  // yellow (next mode)
 
-Adafruit_SSD1306 oled(A1, -1, A0);
+#define LEDRED    A0
+#define LEDWHITE  9
+#define VIBRATO   8  
+
+#define pinA A1 // (unused)
+#define pinB A2 // (unused)
+
+#define RINGPIN A6
+
+Adafruit_SSD1306 oled(10); // 10 is fake Reset Pin and not used
 
 // max is 19 !
 #define SMSPRESET 17
@@ -44,7 +53,7 @@ const char* const smsTable[] PROGMEM = {
 };
 
 char text[169] = 
-    "Guten Morgen, Dave.  " // 21 chars
+    "Guten Morgen         " // 21 chars
     "                     "
     "                     "
     "                     "
@@ -56,14 +65,15 @@ uint8_t txtid = 0;
 char c = 0;
 bool hangedup = true;
 uint8_t index = 0;
-int sensorValue = 0;
+uint8_t sensorValue = 4;
 uint8_t eepromId = 0;
 uint8_t smsId = 0;
 uint8_t pos = 0;
 uint8_t recPlyPauSto = 0;
 int vcc = 3780;
+uint8_t tiki = 0;
 
-void clearText() {
+inline void clearText() {
   for (txtid = 0; txtid<169; ++txtid) text[txtid] = ' ';
   txtid = 0;
 }
@@ -87,7 +97,7 @@ void doRefresh() {
   oled.clearDisplay();
   oled.setCursor(0,0);
 
-  if (sensorValue < 50) {
+  if (sensorValue == 0) {
     // recorder ----------------------------------------
     oled.print(text);
     oled.setCursor(31,8);
@@ -103,7 +113,7 @@ void doRefresh() {
       oled.drawRect(77, 6, 22, 12, WHITE);
     }
     
-  } else if (sensorValue < 200) {
+  } else if (sensorValue == 1) {
     // power -------------------------------------------
     oled.fillRect(42, 49, 40, 14, BLACK);
     oled.drawRect(42, 49, 38, 14, WHITE);
@@ -116,7 +126,7 @@ void doRefresh() {
 
     oled.print(text);
     
-  } else if (sensorValue < 400) {
+  } else if (sensorValue == 2) {
     oled.print(text);
     /* SIGNAL -------------------------------------------
      * 0 and 1 = -115 or less and -111 dBm
@@ -164,7 +174,7 @@ void doRefresh() {
       oled.drawLine(70,60,70,44, WHITE);
     }
     
-  } else if (sensorValue < 600) {
+  } else if (sensorValue == 3) {
     // date and time --------------------------------
     text[42] = '2'; text[43] = '0';
     text[52] = ' ';
@@ -180,7 +190,7 @@ void doRefresh() {
     oled.print(text[59]); oled.print(text[60]);
     oled.setTextSize(1);
     
-  } else if (sensorValue < 800) {
+  } else if (sensorValue == 4) {
     // normal mode (accept, hangup, sms read) --------
     oled.print(text);
     
@@ -216,10 +226,22 @@ void doRefresh() {
 
 void setup() {
   Serial.begin(57600);
-  oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  oled.begin();
+  pinMode(BUTTON3, INPUT_PULLUP);
+  pinMode(pinA, INPUT_PULLUP);
+  pinMode(pinB, INPUT_PULLUP);
+
   pinMode(BUTTON1, INPUT_PULLUP);
   pinMode(BUTTON2, INPUT_PULLUP);
+  pinMode(BUTTON4, INPUT_PULLUP);
+  pinMode(RINGPIN, INPUT);
+  digitalWrite(BUTTON4, HIGH);
+  digitalWrite(BUTTON2, HIGH);
   
+  pinMode(LEDRED, OUTPUT);
+  pinMode(LEDWHITE, OUTPUT);
+  pinMode(VIBRATO, OUTPUT);
+   
   oled.clearDisplay();
   oled.setTextSize(1);
   oled.setTextColor(WHITE);
@@ -234,16 +256,34 @@ void setup() {
   EEPROM.get(eepromId*20, numbers);
 
   initGsm();
-      
-  MsTimer2::set(330, doRefresh);
-  MsTimer2::start();
 }
 
 
 void loop() {
-  sensorValue = analogRead(POTI);
+  if (analogRead(RINGPIN) < 200) {
+    sensorValue = 4;
+    digitalWrite(LEDWHITE, HIGH);
+    if (tiki%10 == 0) {
+      digitalWrite(VIBRATO, HIGH);
+    } else {
+      digitalWrite(VIBRATO, LOW);
+    }
+    tiki++;
+  } else {
+    digitalWrite(LEDWHITE, LOW);
+    digitalWrite(VIBRATO, LOW);
+    tiki=0;  
+  }
 
-  if (sensorValue < 50) {
+  if (digitalRead(BUTTON4) == LOW) {
+    delay(200);
+    if (digitalRead(BUTTON4) == LOW) {
+      sensorValue = (sensorValue+1)%9;
+      clearText();
+    }
+  }
+
+  if (sensorValue == 0) {
     // ----------------------------------- Recorder
 
     if (digitalRead(BUTTON1) == LOW) {
@@ -276,7 +316,7 @@ void loop() {
       txtid = 42;
     }
           
-  } else if (sensorValue < 200) {
+  } else if (sensorValue == 1) {
 
     clearText();
     text[0] = 'P'; text[1] = 'O'; text[2] = 'W'; text[3] = 'E'; text[4] = 'R';
@@ -307,12 +347,11 @@ void loop() {
     vcc = ADCL; 
     vcc |= ADCH<<8; 
     vcc = 1126400L / vcc;
-    if (vcc<3700) vcc = 3700;    
+    if (vcc<3700) vcc = 3700; 
+    if (vcc>4200) vcc = 4200; 
   
     
-  } else if (sensorValue < 400) {
-
-
+  } else if (sensorValue == 2) {
     
     if (digitalRead(BUTTON1) == LOW) {
       txtid = 0;
@@ -322,22 +361,53 @@ void loop() {
       txtid = 0;
       delay(200);
       Serial.println(F("ati"));
+      
     } else {
-      delay(2000);
-      Serial.println(F("at+csq"));
-      clearText();
-      text[0] = 'S'; text[1] = 'I'; text[2] = 'G'; text[3] = 'N'; text[4] = 'A'; text[5] = 'L';
-      txtid = 42;
-    }
-  } else if (sensorValue < 600) {
+      for (int i=0; i<10; ++i) {
+        // make mode switch possible in 2s delay
+        if (digitalRead(BUTTON4) == LOW) {
+          delay(200);
+          if (digitalRead(BUTTON4) == LOW) {
+            i=10;
+            sensorValue = (sensorValue+1)%9;
+            clearText();
+          }
+        } else {
+          delay(200);
+        }
+      }
 
-    delay(2000);
-    Serial.println(F("at+cclk?"));
-    clearText();
-    text[0] = 'D'; text[1] = 'A'; text[2] = 'T'; text[3] = 'E';
-    txtid = 35;
+      if (sensorValue == 2) {
+        Serial.println(F("at+csq"));
+        clearText();
+        text[0] = 'S'; text[1] = 'I'; text[2] = 'G'; text[3] = 'N'; text[4] = 'A'; text[5] = 'L';
+        txtid = 42;        
+      }
+    }
+  } else if (sensorValue == 3) {
+
+    for (int i=0; i<10; ++i) {
+      // make mode switch possible in 2s delay
+      if (digitalRead(BUTTON4) == LOW) {
+        delay(200);
+        if (digitalRead(BUTTON4) == LOW) {
+          i=10;
+          sensorValue = (sensorValue+1)%9;
+          clearText();
+        }
+      } else {
+        delay(200);
+      }
+    }
     
-  } else if (sensorValue < 800) {
+    if (sensorValue == 3) {
+      Serial.println(F("at+cclk?"));
+      clearText();
+      text[0] = 'D'; text[1] = 'A'; text[2] = 'T'; text[3] = 'E';
+      txtid = 35;
+    }
+        
+  } else if (sensorValue == 4) {
     // --------------------------------------- read sms, accept calls and hang up 
     if (digitalRead(BUTTON2) == LOW) {
       delay(200);
@@ -347,6 +417,7 @@ void loop() {
           oled.clearDisplay();
           oled.setCursor(0,0);
           oled.print(F("ACCEPT."));
+          digitalWrite(LEDRED, HIGH);
           clearText();
           oled.display();
           Serial.println(F("ata"));       
@@ -354,6 +425,7 @@ void loop() {
           oled.clearDisplay();
           oled.setCursor(0,0);
           oled.print(F("HANG UP."));
+          digitalWrite(LEDRED, LOW);
           clearText();
           oled.display();
           Serial.println(F("ath"));
@@ -392,13 +464,14 @@ void loop() {
  
     clearText();
 
-    if (sensorValue < 890) {
+    if (sensorValue == 5) {
       eepromId = 0;
-    } else if (sensorValue < 930) {
+    } else if (sensorValue == 6) {
       eepromId = 1;
-    } else if (sensorValue < 1015) {
+    } else if (sensorValue == 7) {
       eepromId = 2;
     } else {
+      // -------------------- 8
       eepromId = 3;
     }
     EEPROM.get(eepromId*20, numbers);
@@ -416,12 +489,14 @@ void loop() {
           Serial.println(F(";"));
           delay(300);
           hangedup = false;
+          digitalWrite(LEDRED, HIGH);
           Serial.println(F("atm"));
           delay(1000);
           
         } else {
           
           hangedup = true;
+          digitalWrite(LEDRED, LOW);
           Serial.println(F("ath"));
           delay(2000);
         }
@@ -479,7 +554,7 @@ void loop() {
     }
   }
 
-  if (sensorValue < 800) {
+  if (sensorValue < 5) {
     while ( Serial.available() ) {
       c = Serial.read();
       if (c == '\r') continue;
@@ -489,4 +564,6 @@ void loop() {
       txtid = (txtid+1)%168;
     }
   }
+
+  doRefresh();
 }
